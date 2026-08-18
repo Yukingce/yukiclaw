@@ -1,0 +1,4 @@
+interface:
+  display_name: "订单服务单元测试"
+  short_description: "为订单微服务设计并验证可靠、可维护的 pytest 单元测试"
+  default_prompt: "使用 $unit-test 为这项订单服务改动编写并运行有针对性的 pytest 测试。"

@@ -1,0 +1,4 @@
+interface:
+  display_name: "订单服务 FastAPI 接口"
+  short_description: "按项目约定实现并验证类型安全、金额精确的 FastAPI 接口"
+  default_prompt: "使用 $fastapi-endpoint 按订单服务规范实现并测试这个 FastAPI 接口。"
