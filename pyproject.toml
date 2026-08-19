@@ -31,6 +31,9 @@ dependencies = [
     "daytona>=0.205.0",
     "langchain-daytona>=0.0.8",
     "lark-oapi>=1.7.2",
+    "arq>=0.28.0",
+    "slowapi>=0.1.10",
+    "prometheus-client>=0.26.0",
 ]
 
 [project.optional-dependencies]

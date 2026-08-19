@@ -12,13 +12,15 @@ from fastapi.responses import JSONResponse
 from channels.base import InboundMessage
 from channels.handler import handle_message
 from infra.logging import get_logger
+from infra.idempotency import seen_before
+from obs.metrics import IDEMPOTENCY_HITS
 
 logger = get_logger()
 
 router = APIRouter(prefix="/webhook", tags=["webhook"])
 
-# 简易幂等：记录已处理事件 id（生产用 Redis 带 TTL）
-_seen_event_ids: set[str] = set()
+# # 简易幂等：记录已处理事件 id（生产用 Redis 带 TTL）
+# _seen_event_ids: set[str] = set()
 
 
 @router.post("/feishu")
@@ -38,13 +40,20 @@ async def feishu_webhook(request: Request, background: BackgroundTasks):
     if body.get("type") == "url_verification":
         return JSONResponse({"challenge": body.get("challenge", "")})
 
-    # ② 幂等去重：用事件 id，避免飞书重试导致重复处理
+    # # ② 幂等去重：用事件 id，避免飞书重试导致重复处理
+    # header = body.get("header", {})
+    # event_id = header.get("event_id")
+    # if event_id and event_id in _seen_event_ids:
+    #     return JSONResponse({"code": 0})   # 重复事件，直接确认
+    # if event_id:
+    #     _seen_event_ids.add(event_id)
+
+    # ② 幂等去重:用 Redis(跨副本共享、带 TTL、重启不丢、原子无竞态)
     header = body.get("header", {})
     event_id = header.get("event_id")
-    if event_id and event_id in _seen_event_ids:
-        return JSONResponse({"code": 0})   # 重复事件，直接确认
-    if event_id:
-        _seen_event_ids.add(event_id)
+    if event_id and await seen_before(request.app.state.redis, event_id, ttl_seconds=3600):
+        IDEMPOTENCY_HITS.inc()        # 埋点：重复事件被挡
+        return JSONResponse({"code": 0})  # 重复事件,直接确认
 
     # ③ 解析消息事件 → 归一化（仅处理 im.message.receive_v1 文本）
     if header.get("event_type") == "im.message.receive_v1":
@@ -74,7 +83,7 @@ async def feishu_webhook(request: Request, background: BackgroundTasks):
 
             # 用 FastAPI 原生 BackgroundTasks（响应返回后执行）——比游离的
             # asyncio.create_task 正规：它由框架管理、保证在响应后调度。
-            # ⚠️ 但它仍无持久化/重试/重启不丢——慢任务的可靠处理见第 10 章 arq 队列。
+            # ⚠️ 但它仍无持久化/重试/重启不丢——慢任务的可靠处理 队列。
             background.add_task(_process)
 
     # ④ 立即 200（飞书 3 秒约束）——不等 agent 跑完

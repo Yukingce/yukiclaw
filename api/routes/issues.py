@@ -33,8 +33,6 @@ async def submit_issue_secure(
     )
     return {"reply": reply, "tenant": tenant_id}
 
-
-
 @router.post("", response_model=IssueResponse)
 async def submit_issue(
     req: IssueRequest,

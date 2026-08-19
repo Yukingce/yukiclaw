@@ -1,15 +1,16 @@
-"""sandbox/manager.py —— 沙箱接入与生命周期管理（"沙箱即工具"模式）
+"""
+    sandbox/manager.py —— 沙箱接入与生命周期管理（"沙箱即工具"模式）
 
-这个模块负责：把 Agent 的"手脚"放进一个隔离的远程沙箱里。
-Agent 在沙箱里读写文件、跑命令（pytest、python 等），而宿主机/主进程保持干净、
-不被 Agent 生成的代码污染，密钥也不会泄漏进沙箱。
+    这个模块负责：把 Agent 的"手脚"放进一个隔离的远程沙箱里。
+    Agent 在沙箱里读写文件、跑命令（pytest、python 等），而宿主机/主进程保持干净、
+    不被 Agent 生成的代码污染，密钥也不会泄漏进沙箱。
 
-工程化要点（来自官方 sandboxes 文档）：
-- 按 thread_id 隔离：每个会话（一个 Issue）对应一个独立沙箱，get-or-create 复用；
-- TTL 自动回收：空闲沙箱由 provider（Daytona）自动清理，避免一直挂着计费；
-- 密钥绝不进沙箱：API key 只在主进程 build_model() 里用。
+    工程化要点（来自官方 sandboxes 文档）：
+    - 按 thread_id 隔离：每个会话（一个 Issue）对应一个独立沙箱，get-or-create 复用；
+    - TTL 自动回收：空闲沙箱由 provider（Daytona）自动清理，避免一直挂着计费；
+    - 密钥绝不进沙箱：API key 只在主进程 build_model() 里用。
 
-注意（高并发），要升级成"沙箱池 + 并发隔离 + 超时回收"（第 11 章），并配合任务队列复用沙箱。
+    注意（高并发），要升级成"沙箱池 + 并发隔离 + 超时回收"（第 11 章），并配合任务队列复用沙箱。
 """
 from __future__ import annotations
 

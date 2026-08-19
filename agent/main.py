@@ -8,6 +8,8 @@ from deepagents import create_deep_agent
 from middleware.audit import ToolAuditMiddleware # 工具调用时间
 from middleware.context import RequestContextMiddleware # 记录用户信息
 from middleware.cost import CostMeterMiddleware # 记录消耗的token
+from middleware.concurrency import LLMConcurrencyMiddleware  # 限制 LLM 并发
+from infra.fallback import build_fallback_middleware  # LLM 降级
 
 # backend 文件系统
 from langgraph.checkpoint.memory import MemorySaver
@@ -37,8 +39,29 @@ DEVMATE_SYSTEM_PROMPT = """你是 DevMate，一个严谨的研发助手，服务
 - 每次改动后，用一两句话说明"改了什么、为什么这么改"。
 """
 
+
+async def build_sandbox_backend():
+    """按 SYC_SANDBOX_PROVIDER 选用沙箱后端，返回 (backend, workdir)。
+
+    docker  → 自托管加固容器
+    daytona → 外部托管沙箱
+    两者都是 BaseSandbox，create_deep_agent(backend=...) 一视同仁。
+    """
+    s = get_settings()
+    if s.sandbox_provider == "docker":
+        from sandbox.docker_manager import create_one_sandbox, seed_project
+        sb = await create_one_sandbox()
+        await seed_project(sb)
+        return sb, s.sandbox_workdir
+    else:  # daytona
+        from sandbox.manager import get_or_create_sandbox_backend
+        backend, sandbox, client, workdir = get_or_create_sandbox_backend("default")
+        return backend, workdir
+
+
 from pathlib import Path
 from deepagents.backends import FilesystemBackend
+from subagents.reviewer import REVIEWER_PERMISSIONS
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 def build_agent(checkpointer=None, store=None, user_id="anonymous", channel="api"):
@@ -51,6 +74,7 @@ def build_agent(checkpointer=None, store=None, user_id="anonymous", channel="api
     return create_deep_agent(
         model=get_model("strong"),
         backend=backend,
+        permissions=REVIEWER_PERMISSIONS, # FilesystemBackend 上的物理只读 reviewer
         system_prompt=DEVMATE_SYSTEM_PROMPT,
         skills=[str(PROJECT_ROOT / "skills")],
         memory=[str(PROJECT_ROOT / "AGENTS.md")],
@@ -59,6 +83,8 @@ def build_agent(checkpointer=None, store=None, user_id="anonymous", channel="api
             RequestContextMiddleware(user_id=user_id, channel=channel),
             ToolAuditMiddleware(),
             CostMeterMiddleware(),
+            LLMConcurrencyMiddleware(),
+            build_fallback_middleware()
         ],
         checkpointer=checkpointer,      # ← 外部传入（lifespan 的 AsyncPostgresSaver）
         store=store,                    # ← 外部传入（lifespan 的 AsyncPostgresStore）
@@ -105,7 +131,9 @@ def build_team_agent(thread_id: str, user_id: str = "anonymous", channel: str = 
         middleware=[
             RequestContextMiddleware(user_id, channel),
             ToolAuditMiddleware(),
-            CostMeterMiddleware(),
+            CostMeterMiddleware(tier="strong"),
+            LLMConcurrencyMiddleware(),
+            build_fallback_middleware()
         ], # 上下文 / 审计 / 成本 三条自定义中间件。 列表越靠前 = 越外层。
         checkpointer=MemorySaver(),
     )

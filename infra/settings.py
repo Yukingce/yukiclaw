@@ -5,6 +5,7 @@ yukiClaw 的配置中枢
 - Pydantic Settings 做类型校验，缺失关键项时给清晰报错
 
 """
+import os
 from functools import cache
 from typing import ClassVar, Self
 
@@ -49,7 +50,7 @@ class Settings(BaseSettings):
     timeout: int = 60
 
     # ===== 持久化底座 =====
-    postgres_url: str = "postgresql://syc:syc@localhost:5432/yukiclaw"
+    postgres_url: str = "postgresql://yuking:yuking@localhost:5432/yukiclaw"
     pg_pool_min: int = 2
     pg_pool_max: int = 20
 
@@ -73,6 +74,28 @@ class Settings(BaseSettings):
     api_keys: dict[str, str] = {}
 
 
+    # ===== 沙箱隔离 =====
+    sandbox_provider: str = "docker"        # docker（自托管）/ daytona
+    sandbox_runtime: str = "runc"           # runc(加固容器) / runsc(gVisor) / kata(microVM)
+    sandbox_image: str = "yuki-sandbox:latest"
+    sandbox_workdir: str = "/home/AgentSandbox"    # 容器内工作目录（tmpfs，可写）
+    sandbox_mem_limit: str = "512m"
+    sandbox_pids_limit: int = 256
+    sandbox_cpus: str = "1.0"
+    sandbox_pool_size: int = 4              # 沙箱池并发上限
+
+    # ===== 并发与限流 =====
+    max_concurrent_llm: int = 8             # LLM 并发调用上限
+
+
+    # ===== LangSmith 可观测=====
+    langsmith_tracing: bool = False
+    langsmith_api_key: SecretStr = SecretStr("")
+    langsmith_project: str = "yukiclaw"
+    langsmith_endpoint: str = "https://api.smith.langchain.com"
+
+
+
     @model_validator(mode="after")
     def resolve_model_tiers(self) -> Self:
         """按供应商填充模型档位，并校验路由所需档位是否完整。"""
@@ -92,8 +115,33 @@ class Settings(BaseSettings):
             raise ValueError(f"model_tiers 缺少必要档位：{missing}")
         return self
 
+def _export_langsmith_env(s: "Settings") -> None:
+    """把 LangSmith 变量写回 os.environ。
 
-@cache
-def get_settings() -> Settings:
-    """全进程单例。业务代码统一通过它拿配置。"""
-    return Settings()
+    关键：LangSmith 库只认系统环境变量，不读 Settings 对象——所以必须写回 os.environ。
+    只在开启 tracing 时写，避免没配 key 时设一堆空变量。
+    """
+    if not s.langsmith_tracing:
+        return
+    os.environ["LANGSMITH_TRACING"] = "true"
+    os.environ["LANGSMITH_API_KEY"] = s.langsmith_api_key.get_secret_value()
+    os.environ["LANGSMITH_PROJECT"] = s.langsmith_project
+    os.environ["LANGSMITH_ENDPOINT"] = s.langsmith_endpoint
+
+
+# ===== 模块级执行：import 这个模块时就把环境变量写好 =====
+# 放模块级（不只在 get_settings 里）是为了保证：任何代码一旦 import infra.settings，
+# LangSmith 变量就立刻进环境，且通常早于 langchain/langgraph 真正使用追踪。
+_settings = Settings()
+_export_langsmith_env(_settings)
+
+def get_settings() -> "Settings":
+    """全局单例。"""
+    return _settings
+
+
+# 全进程单例的一种实现方式
+# @cache
+# def get_settings() -> Settings:
+#     """全进程单例。业务代码统一通过它拿配置。"""
+#     return Settings()

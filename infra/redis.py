@@ -1,4 +1,6 @@
 """
+    没有用
+    
     异步 Redis 连接池（redis.asyncio）
 
     redis-py 自带异步接口与连接池。这里建一个全局复用的客户端。

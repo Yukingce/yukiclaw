@@ -4,6 +4,8 @@
     用 awrap_model_call 包裹模型调用，调用后从 AIMessage.usage_metadata 读 token，
     并按官方规范用 ExtendedModelResponse + Command 把累计用量写进 agent 状态。
 """
+
+import time
 from collections.abc import Callable
 
 from langchain.agents.middleware import (
@@ -17,6 +19,7 @@ from langgraph.types import Command
 from typing_extensions import NotRequired
 
 from infra.logging import get_logger
+from obs.metrics import record_llm_cost, AGENT_LLM_DURATION, AGENT_LLM_CALLS
 
 logger = get_logger()
 
@@ -33,15 +36,31 @@ class CostMeterMiddleware(AgentMiddleware):
     # 声明扩展状态（官方做法）
     state_schema = CostState
 
+    def __init__(self, tier: str = "strong") -> None:
+        super().__init__()
+        self.tier = tier
+
+
     async def awrap_model_call(
         self,
         request: ModelRequest,
         handler: Callable[[ModelRequest], ModelResponse],
     ) -> ExtendedModelResponse:
-        
-        response = await handler(request)      # 放行：真正调用模型
+
+        start = time.perf_counter()
+
+        try:
+            response = await handler(request)      # 放行：真正调用模型
+            AGENT_LLM_CALLS.labels(self.tier, "ok").inc()        # 埋点：调用成功
+        except Exception:
+            AGENT_LLM_CALLS.labels(self.tier, "error").inc()     # 埋点：调用失败
+            raise                                                 # 失败也计数，再抛给 fallback 处理
+        finally:
+            AGENT_LLM_DURATION.labels(self.tier).observe(time.perf_counter() - start)  # 埋点：耗时
 
         in_tok, out_tok = self._extract_usage(response)
+
+        record_llm_cost(self.tier, in_tok, out_tok)              # 埋点：token + 成本
 
         # 从当前状态读累计值（NotRequired，默认 0），再累加
         prev_in = request.state.get("total_input_tokens", 0)

@@ -9,5 +9,8 @@ wheels/
 # Virtual environments
 .venv
 .env
+.uv-cache
+.pytest_cache
+
 docker-data
 logs/
